@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: entries-service
+    runtime: python
+    plan: starter # disks require a paid plan; use "free" only if losing data on restart is fine
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /entries
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      - key: DB_PATH
+        value: /var/data/entries.db
+    disk:
+      name: sqlite-data
+      mountPath: /var/data
+      sizeGB: 1
