@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -51,7 +52,23 @@ DATE_FORMATS = (
     "%d %B %Y",
     "%B %d, %Y",
     "%d %b %Y",
+    "%b %d, %Y",
+    "%d.%m.%Y",
 )
+
+# Unicode spaces iOS uses in formatted dates, plus the " at <time>" suffix it
+# appends. Both have to go before the date itself will parse.
+UNICODE_SPACES = (" ", " ", " ", " ")
+TIME_SUFFIX = re.compile(r"[\s,]+(?:at|kl\.?|um|à)\s+.*$", re.IGNORECASE)
+
+
+def normalize_date_text(value: str) -> str:
+    """Reduce a localised date string to just its date portion."""
+    text = value.strip()
+    for space in UNICODE_SPACES:
+        text = text.replace(space, " ")
+    text = TIME_SUFFIX.sub("", text)
+    return " ".join(text.split())
 
 
 class EntryIn(BaseModel):
@@ -63,14 +80,15 @@ class EntryIn(BaseModel):
     def coerce_date(cls, value):
         """Accept timestamps and common human-readable dates, not just YYYY-MM-DD.
 
-        iOS Shortcuts serializes its Date variable as a full ISO timestamp, which
-        a bare `date` field rejects.
+        iOS Shortcuts renders its Date variable as "31 Aug 2026 at 4:56 PM",
+        using a narrow no-break space before the meridiem; a bare `date` field
+        rejects that and every other localised form.
         """
         if isinstance(value, datetime):
             return value.date()
         if not isinstance(value, str):
             return value
-        text = value.strip()
+        text = normalize_date_text(value)
         try:
             return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
         except ValueError:
