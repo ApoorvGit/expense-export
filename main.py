@@ -595,7 +595,7 @@ app = FastAPI(title="Expense Tracker API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
     # No cookies are used, and credentialed requests cannot combine with "*".
     allow_credentials=False,
@@ -846,6 +846,32 @@ def update_category(entry_id: int, update: CategoryUpdate) -> Entry:
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"No entry with id {entry_id}")
+    return Entry(**row)
+
+
+@app.delete(
+    "/entries/{entry_id}",
+    response_model=Entry,
+    dependencies=[Depends(require_api_key)],
+)
+def delete_entry(entry_id: int) -> Entry:
+    """Remove one entry permanently.
+
+    Returns the deleted row rather than an empty body: `message` and `date` are
+    all a client needs to re-POST it, so an undo is possible right after the
+    fact. There is no soft delete, so once the response is gone the raw SMS is
+    unrecoverable.
+    """
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        row = cur.execute(
+            "DELETE FROM entries WHERE id = %s"
+            " RETURNING id, message, date, amount, merchant, currency, direction,"
+            " instrument, bank, category, category_source",
+            (entry_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No entry with id {entry_id}")
+    log.info("deleted entry id=%s", entry_id)
     return Entry(**row)
 
 
