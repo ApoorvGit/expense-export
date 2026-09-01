@@ -2,10 +2,11 @@ import json
 import logging
 import os
 import re
+import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ValidationError, field_validator
@@ -13,6 +14,16 @@ from pydantic import BaseModel, ValidationError, field_validator
 log = logging.getLogger("uvicorn.error")
 
 DATABASE_URL = os.environ["DATABASE_URL"]
+
+# Read at import so a deployment missing the key fails to start rather than
+# serving bank messages to the open internet.
+API_KEY = os.environ["API_KEY"]
+
+
+def require_api_key(x_api_key: str = Header(default="")) -> None:
+    """Gate an endpoint on the shared secret sent as the X-API-Key header."""
+    if not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key")
 
 # Free-tier Postgres auto-suspends its compute when idle, which silently kills
 # pooled connections. `check` validates each one on checkout and transparently
@@ -174,7 +185,12 @@ def describe_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-@app.post("/entries", response_model=Entry, status_code=201)
+@app.post(
+    "/entries",
+    response_model=Entry,
+    status_code=201,
+    dependencies=[Depends(require_api_key)],
+)
 async def create_entry(request: Request) -> Entry:
     raw = await request.body()
     payload: object = None
@@ -199,7 +215,11 @@ async def create_entry(request: Request) -> Entry:
     return Entry(id=row[0], message=entry.message, date=entry.date)
 
 
-@app.get("/entries", response_model=list[Entry])
+@app.get(
+    "/entries",
+    response_model=list[Entry],
+    dependencies=[Depends(require_api_key)],
+)
 def list_entries() -> list[Entry]:
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         rows = cur.execute(
