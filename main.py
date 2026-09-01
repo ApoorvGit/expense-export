@@ -2,34 +2,41 @@ import json
 import logging
 import os
 import re
-import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date, datetime
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ValidationError, field_validator
 
 log = logging.getLogger("uvicorn.error")
 
-# Override with DB_PATH in deployment to point at a persistent disk mount.
-DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).parent / "entries.db"))
+DATABASE_URL = os.environ["DATABASE_URL"]
 
-
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# Free-tier Postgres auto-suspends its compute when idle, which silently kills
+# pooled connections. `check` validates each one on checkout and transparently
+# replaces the dead ones, so a request after a quiet spell wakes the database
+# instead of failing on a stale socket.
+pool = ConnectionPool(
+    DATABASE_URL,
+    min_size=1,
+    max_size=4,
+    open=False,
+    timeout=30,
+    max_idle=300,
+    check=ConnectionPool.check_connection,
+)
 
 
 def init_db() -> None:
-    with get_conn() as conn:
+    with pool.connection() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 message TEXT NOT NULL,
-                date TEXT NOT NULL
+                date DATE NOT NULL
             )
             """
         )
@@ -37,11 +44,25 @@ def init_db() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    pool.open(wait=True, timeout=30)
     init_db()
     yield
+    pool.close()
 
 
 app = FastAPI(title="Entries Service", lifespan=lifespan)
+
+
+@app.get("/ping")
+def ping() -> dict:
+    """Wake the container without touching the database.
+
+    Free hosting suspends the service when idle; a request to this endpoint is
+    held open while it boots, so a client that pings first meets a warm server
+    on its next call. Deliberately does no query, leaving the database
+    suspended until an actual entry arrives.
+    """
+    return {"status": "ok"}
 
 
 DATE_FORMATS = (
@@ -121,33 +142,67 @@ def extract_json(raw: bytes) -> dict:
         return json.loads(text[start : end + 1])
 
 
+def describe_payload(raw: bytes, payload: object) -> str:
+    """Summarise a rejected body without echoing the entry itself.
+
+    Messages are bank SMS carrying account tails, balances and transaction
+    references, and logs are retained far longer than the debugging is useful
+    for. Record the payload's shape and its date, which is the field that
+    actually fails, and reduce the message to a length.
+    """
+    if isinstance(payload, dict):
+        parts = [f"keys={sorted(map(str, payload))}"]
+        if "date" in payload:
+            parts.append(f"date={payload['date']!r}")
+        if isinstance(payload.get("message"), str):
+            parts.append(f"message_chars={len(payload['message'])}")
+        return " ".join(parts)
+    return f"unparsed bytes={len(raw)}"
+
+
+def describe_error(exc: Exception) -> str:
+    """Render a validation failure without its input values.
+
+    Pydantic's own string embeds the offending input, which for a missing field
+    is the entire payload.
+    """
+    if isinstance(exc, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(p) for p in err['loc']) or 'body'}: {err['type']}"
+            for err in exc.errors()
+        )
+    return f"{type(exc).__name__}: {exc}"
+
+
 @app.post("/entries", response_model=Entry, status_code=201)
 async def create_entry(request: Request) -> Entry:
     raw = await request.body()
+    payload: object = None
     try:
         payload = extract_json(raw)
         entry = EntryIn.model_validate(payload)
     except (json.JSONDecodeError, ValidationError, UnicodeDecodeError) as exc:
         log.warning(
-            "rejected POST /entries: content-type=%r body=%r error=%s",
+            "rejected POST /entries: content-type=%r %s error=%s",
             request.headers.get("content-type"),
-            raw[:1000],
-            exc,
+            describe_payload(raw, payload),
+            describe_error(exc),
         )
+        # The caller owns this data, so the response may name values the log omits.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO entries (message, date) VALUES (?, ?)",
-            (entry.message, entry.date.isoformat()),
-        )
-    return Entry(id=cur.lastrowid, message=entry.message, date=entry.date)
+    with pool.connection() as conn:
+        row = conn.execute(
+            "INSERT INTO entries (message, date) VALUES (%s, %s) RETURNING id",
+            (entry.message, entry.date),
+        ).fetchone()
+    return Entry(id=row[0], message=entry.message, date=entry.date)
 
 
 @app.get("/entries", response_model=list[Entry])
 def list_entries() -> list[Entry]:
-    with get_conn() as conn:
-        rows = conn.execute(
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
             "SELECT id, message, date FROM entries ORDER BY id"
         ).fetchall()
-    return [Entry(**dict(row)) for row in rows]
+    return [Entry(**row) for row in rows]
