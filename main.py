@@ -180,152 +180,148 @@ def find_bank(message: str) -> str | None:
     return best[1] if best else None
 
 
-# Merchant name to spend category. Order matters: more specific patterns come
-# first, so "AMAZON WEB SERVICES" is a subscription while "AMAZON PAY" is
+# Merchant name to spend category, seeded into the category_keywords table at
+# startup (see seed_builtin_keywords). Order matters: more specific groups
+# come first, so "AMAZON WEB SERVICES" is a subscription while "AMAZON PAY" is
 # shopping, and "TATA 1MG" is healthcare while "TATA POWER" is a utility.
-CATEGORY_PATTERNS = (
+# Each keyword is matched literally, whole-word and case-insensitively — see
+# load_category_keyword_rules.
+BUILTIN_CATEGORY_KEYWORDS = (
     (
         "subscriptions",
-        re.compile(
-            r"\b(RENDER\.COM|AWS|AMAZON WEB SERVICES|GOOGLE CLOUD|GCP|AZURE|GITHUB"
-            r"|VERCEL|NETLIFY|CLOUDFLARE|DIGITALOCEAN|HEROKU|OPENAI|ANTHROPIC|CLAUDE"
-            r"|NOTION|FIGMA|ADOBE|JETBRAINS|MICROSOFT|GOOGLE ONE|ICLOUD|APPLE"
-            r"|SPOTIFY|SLACK|ZOOM|DROPBOX|GODADDY|NAMECHEAP)\b",
-            re.IGNORECASE,
+        (
+            "RENDER.COM", "AWS", "AMAZON WEB SERVICES", "GOOGLE CLOUD", "GCP",
+            "AZURE", "GITHUB", "VERCEL", "NETLIFY", "CLOUDFLARE", "DIGITALOCEAN",
+            "HEROKU", "OPENAI", "ANTHROPIC", "CLAUDE", "NOTION", "FIGMA", "ADOBE",
+            "JETBRAINS", "MICROSOFT", "GOOGLE ONE", "ICLOUD", "APPLE", "SPOTIFY",
+            "SLACK", "ZOOM", "DROPBOX", "GODADDY", "NAMECHEAP",
         ),
     ),
     (
         "entertainment",
-        re.compile(
-            r"\b(NETFLIX|PRIME VIDEO|HOTSTAR|DISNEY|JIOCINEMA|SONYLIV|ZEE5|AHA"
-            r"|BOOKMYSHOW|PVR|INOX|CINEPOLIS|GAMING|STEAM)\b",
-            re.IGNORECASE,
+        (
+            "NETFLIX", "PRIME VIDEO", "HOTSTAR", "DISNEY", "JIOCINEMA", "SONYLIV",
+            "ZEE5", "AHA", "BOOKMYSHOW", "PVR", "INOX", "CINEPOLIS", "GAMING",
+            "STEAM",
         ),
     ),
     (
         "food_delivery",
-        re.compile(
-            r"\b(SWIGGY|ZOMATO|EATSURE|BOX8|FAASOS|FRESHMENU|EATFIT|BEHROUZ)\b",
-            re.IGNORECASE,
-        ),
+        ("SWIGGY", "ZOMATO", "EATSURE", "BOX8", "FAASOS", "FRESHMENU", "EATFIT", "BEHROUZ"),
     ),
     (
         "groceries",
-        re.compile(
-            r"\b(BIGBASKET|BLINKIT|ZEPTO|INSTAMART|DUNZO|JIOMART|DMART|D MART"
-            r"|RELIANCE FRESH|NATURES BASKET|SPENCERS|LICIOUS|COUNTRY DELIGHT"
-            r"|MILKBASKET|SUPERMARKET|KIRANA|GROCER)\b",
-            re.IGNORECASE,
+        (
+            "BIGBASKET", "BLINKIT", "ZEPTO", "INSTAMART", "DUNZO", "JIOMART",
+            "DMART", "D MART", "RELIANCE FRESH", "NATURES BASKET", "SPENCERS",
+            "LICIOUS", "COUNTRY DELIGHT", "MILKBASKET", "SUPERMARKET", "KIRANA",
+            "GROCER",
         ),
     ),
     (
         "dining",
-        re.compile(
-            r"\b(STARBUCKS|CAFE|COFFEE|CHAAYOS|THIRD WAVE|BLUE TOKAI|RESTAURANT"
-            r"|DHABA|BARBEQUE|BARBEQUE NATION|DOMINO|PIZZA|MCDONALD|KFC"
-            r"|BURGER KING|SUBWAY|BIRYANI|BAKERY|SWEETS|HOTEL)\b",
-            re.IGNORECASE,
+        (
+            "STARBUCKS", "CAFE", "COFFEE", "CHAAYOS", "THIRD WAVE", "BLUE TOKAI",
+            "RESTAURANT", "DHABA", "BARBEQUE", "BARBEQUE NATION", "DOMINO",
+            "PIZZA", "MCDONALD", "KFC", "BURGER KING", "SUBWAY", "BIRYANI",
+            "BAKERY", "SWEETS", "HOTEL",
         ),
     ),
     (
         "clothing",
-        re.compile(
-            r"\b(MYNTRA|AJIO|NYKAA FASHION|ZARA|H&M|UNIQLO|LIFESTYLE|PANTALOONS"
-            r"|WESTSIDE|SHOPPERS STOP|LEVIS|ALLEN SOLLY|VAN HEUSEN|PETER ENGLAND"
-            r"|BEWAKOOF|SNITCH|FABINDIA|BIBA|DECATHLON|NIKE|ADIDAS|PUMA|SKECHERS"
-            r"|BATA|METRO SHOES)\b",
-            re.IGNORECASE,
+        (
+            "MYNTRA", "AJIO", "NYKAA FASHION", "ZARA", "H&M", "UNIQLO",
+            "LIFESTYLE", "PANTALOONS", "WESTSIDE", "SHOPPERS STOP", "LEVIS",
+            "ALLEN SOLLY", "VAN HEUSEN", "PETER ENGLAND", "BEWAKOOF", "SNITCH",
+            "FABINDIA", "BIBA", "DECATHLON", "NIKE", "ADIDAS", "PUMA", "SKECHERS",
+            "BATA", "METRO SHOES",
         ),
     ),
     (
         "healthcare",
-        re.compile(
-            r"\b(1MG|TATA 1MG|APOLLO|PHARMEASY|NETMEDS|MEDPLUS|WELLNESS FOREVER"
-            r"|PRACTO|CULTFIT|CULT\.FIT|FORTIS|MANIPAL|NARAYANA|MAX HEALTHCARE"
-            r"|HOSPITAL|CLINIC|DIAGNOSTIC|PATHOLOGY|LAL PATH|THYROCARE|PHARMACY"
-            r"|CHEMIST|MEDICAL|DENTAL|HEALTHCARE)\b",
-            re.IGNORECASE,
+        (
+            "1MG", "TATA 1MG", "APOLLO", "PHARMEASY", "NETMEDS", "MEDPLUS",
+            "WELLNESS FOREVER", "PRACTO", "CULTFIT", "CULT.FIT", "FORTIS",
+            "MANIPAL", "NARAYANA", "MAX HEALTHCARE", "HOSPITAL", "CLINIC",
+            "DIAGNOSTIC", "PATHOLOGY", "LAL PATH", "THYROCARE", "PHARMACY",
+            "CHEMIST", "MEDICAL", "DENTAL", "HEALTHCARE",
         ),
     ),
     (
         "travel",
-        re.compile(
-            r"\b(CLEARTRIP|MAKEMYTRIP|MMT|GOIBIBO|YATRA|EASEMYTRIP|IRCTC|INDIGO"
-            r"|AIR INDIA|VISTARA|AKASA|SPICEJET|EMIRATES|QATAR AIRWAYS|LUFTHANSA"
-            r"|OYO|AIRBNB|BOOKING\.COM|AGODA|TREEBO|FABHOTELS|REDBUS|ABHIBUS"
-            r"|TRAVEL|AIRLINES|AIRPORT)\b",
-            re.IGNORECASE,
+        (
+            "CLEARTRIP", "MAKEMYTRIP", "MMT", "GOIBIBO", "YATRA", "EASEMYTRIP",
+            "IRCTC", "INDIGO", "AIR INDIA", "VISTARA", "AKASA", "SPICEJET",
+            "EMIRATES", "QATAR AIRWAYS", "LUFTHANSA", "OYO", "AIRBNB",
+            "BOOKING.COM", "AGODA", "TREEBO", "FABHOTELS", "REDBUS", "ABHIBUS",
+            "TRAVEL", "AIRLINES", "AIRPORT",
         ),
     ),
     (
         "transport",
-        re.compile(
-            r"\b(UBER|OLA|RAPIDO|BLUSMART|NAMMA YATRI|DMRC|METRO RAIL|BMTC|BEST"
-            r"|FASTAG|PARKING|TOLL)\b",
-            re.IGNORECASE,
+        (
+            "UBER", "OLA", "RAPIDO", "BLUSMART", "NAMMA YATRI", "DMRC",
+            "METRO RAIL", "BMTC", "BEST", "FASTAG", "PARKING", "TOLL",
         ),
     ),
     (
         "fuel",
-        re.compile(
-            r"\b(INDIAN OIL|IOCL|IOC|HPCL|HP PETROL|BHARAT PETROLEUM|BPCL|SHELL"
-            r"|NAYARA|JIO-?BP|PETROL|DIESEL|FUEL|FILLING STATION)\b",
-            re.IGNORECASE,
+        (
+            "INDIAN OIL", "IOCL", "IOC", "HPCL", "HP PETROL", "BHARAT PETROLEUM",
+            "BPCL", "SHELL", "NAYARA", "JIOBP", "JIO-BP", "PETROL", "DIESEL",
+            "FUEL", "FILLING STATION",
         ),
     ),
     (
         "utilities",
-        re.compile(
-            r"\b(ELECTRICITY|BESCOM|MSEB|MSEDCL|TNEB|BSES|ADANI ELECTRICITY"
-            r"|TATA POWER|TORRENT POWER|INDANE|HP GAS|BHARATGAS|GAIL|GAS AGENCY"
-            r"|AIRTEL|JIO|VODAFONE|VI |BSNL|ACT FIBERNET|HATHWAY|EXCITEL"
-            r"|BROADBAND|RECHARGE|TATA SKY|TATAPLAY|DISH TV|D2H|WATER BOARD"
-            r"|MUNICIPAL)\b",
-            re.IGNORECASE,
+        (
+            "ELECTRICITY", "BESCOM", "MSEB", "MSEDCL", "TNEB", "BSES",
+            "ADANI ELECTRICITY", "TATA POWER", "TORRENT POWER", "INDANE",
+            "HP GAS", "BHARATGAS", "GAIL", "GAS AGENCY", "AIRTEL", "JIO",
+            "VODAFONE", "VI ", "BSNL", "ACT FIBERNET", "HATHWAY", "EXCITEL",
+            "BROADBAND", "RECHARGE", "TATA SKY", "TATAPLAY", "DISH TV", "D2H",
+            "WATER BOARD", "MUNICIPAL",
         ),
     ),
     (
         "education",
-        re.compile(
-            r"\b(UDEMY|COURSERA|UPGRAD|BYJU|UNACADEMY|VEDANTU|SCALER|EDUREKA"
-            r"|SIMPLILEARN|GREAT LEARNING|SCHOOL|COLLEGE|UNIVERSITY|TUITION"
-            r"|EXAM FEE)\b",
-            re.IGNORECASE,
+        (
+            "UDEMY", "COURSERA", "UPGRAD", "BYJU", "UNACADEMY", "VEDANTU",
+            "SCALER", "EDUREKA", "SIMPLILEARN", "GREAT LEARNING", "SCHOOL",
+            "COLLEGE", "UNIVERSITY", "TUITION", "EXAM FEE",
         ),
     ),
     (
         "investment",
-        re.compile(
-            r"\b(ZERODHA|GROWW|UPSTOX|ANGEL ONE|ANGELONE|KUVERA|SMALLCASE"
-            r"|INDMONEY|COIN|MUTUAL FUND|MF |SIP |APY|NPS|PPF|ELSS|SUKANYA"
-            r"|RECURRING DEPOSIT|FIXED DEPOSIT)\b",
-            re.IGNORECASE,
+        (
+            "ZERODHA", "GROWW", "UPSTOX", "ANGEL ONE", "ANGELONE", "KUVERA",
+            "SMALLCASE", "INDMONEY", "COIN", "MUTUAL FUND", "MF ", "SIP ",
+            "APY", "NPS", "PPF", "ELSS", "SUKANYA", "RECURRING DEPOSIT",
+            "FIXED DEPOSIT",
         ),
     ),
     (
         "insurance",
-        re.compile(
-            r"\b(LIC|HDFC LIFE|ICICI PRU|SBI LIFE|MAX LIFE|TATA AIA|BAJAJ ALLIANZ"
-            r"|POLICYBAZAAR|STAR HEALTH|NIVA BUPA|CARE HEALTH|ACKO|DIGIT"
-            r"|INSURANCE|POLICY PREMIUM)\b",
-            re.IGNORECASE,
+        (
+            "LIC", "HDFC LIFE", "ICICI PRU", "SBI LIFE", "MAX LIFE", "TATA AIA",
+            "BAJAJ ALLIANZ", "POLICYBAZAAR", "STAR HEALTH", "NIVA BUPA",
+            "CARE HEALTH", "ACKO", "DIGIT", "INSURANCE", "POLICY PREMIUM",
         ),
     ),
     (
         "shopping",
-        re.compile(
-            r"\b(AMAZON|FLIPKART|MEESHO|SNAPDEAL|TATA CLIQ|TATACLIQ|NYKAA|PUROLATOR"
-            r"|RELIANCE DIGITAL|CROMA|VIJAY SALES|IKEA|PEPPERFRY|URBAN LADDER"
-            r"|FIRSTCRY|LENSKART|TITAN|TANISHQ|CARATLANE|STORE|MART|RETAIL)\b",
-            re.IGNORECASE,
+        (
+            "AMAZON", "FLIPKART", "MEESHO", "SNAPDEAL", "TATA CLIQ", "TATACLIQ",
+            "NYKAA", "PUROLATOR", "RELIANCE DIGITAL", "CROMA", "VIJAY SALES",
+            "IKEA", "PEPPERFRY", "URBAN LADDER", "FIRSTCRY", "LENSKART", "TITAN",
+            "TANISHQ", "CARATLANE", "STORE", "MART", "RETAIL",
         ),
     ),
     (
         "bank_charges",
-        re.compile(
-            r"\b(SMS CHARGE|CHARGE|CHARGES|\bFEE\b|FEES|GST|ANNUAL FEE|AMC"
-            r"|PENALTY|MIN BAL|LATE PAYMENT|INTEREST)\b",
-            re.IGNORECASE,
+        (
+            "SMS CHARGE", "CHARGE", "CHARGES", "FEE", "FEES", "GST",
+            "ANNUAL FEE", "AMC", "PENALTY", "MIN BAL", "LATE PAYMENT", "INTEREST",
         ),
     ),
 )
@@ -372,7 +368,7 @@ CATEGORIES = (
 
 # Guard against drift: a category the parser assigns but PATCH would refuse is an
 # awkward inconsistency to discover in production, so fail at import instead.
-_parsed_categories = {name for name, _ in CATEGORY_PATTERNS} | set(
+_parsed_categories = {name for name, _ in BUILTIN_CATEGORY_KEYWORDS} | set(
     CATEGORY_BY_INSTRUMENT.values()
 )
 if not _parsed_categories <= set(CATEGORIES):
@@ -381,18 +377,44 @@ if not _parsed_categories <= set(CATEGORIES):
         + ", ".join(sorted(_parsed_categories - set(CATEGORIES)))
     )
 
+# Categories added via POST /categories, on top of the built-in CATEGORIES
+# tuple. Loaded from the `categories` table at startup and updated in memory
+# on each insert — fine for the single Render instance this runs on; a second
+# instance wouldn't see a new one until its own restart.
+CUSTOM_CATEGORIES: set[str] = set()
+
+# Merchant-keyword match rules, loaded from the category_keywords table at
+# startup (load_category_keyword_rules) and extended in memory by
+# create_category. Two lists rather than one so custom rules are always
+# tried first — see find_category.
+BUILTIN_KEYWORD_RULES: list[tuple[str, re.Pattern]] = []
+CUSTOM_KEYWORD_RULES: list[tuple[str, re.Pattern]] = []
+
+
+def normalize_category(value: str) -> str:
+    return value.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def known_categories() -> set[str]:
+    return set(CATEGORIES) | CUSTOM_CATEGORIES
+
+
+def keyword_pattern(keyword: str) -> re.Pattern:
+    return re.compile(rf"\b{re.escape(keyword)}\b", re.IGNORECASE)
+
 
 def find_category(merchant: str | None, instrument: str | None) -> str | None:
     """Bucket a transaction by what it was for.
 
-    Matches the merchant name against known brands, then falls back to the
-    instrument. Returns None rather than guessing — a UPI payment to a person,
-    or an unknown shop, is genuinely uncategorised.
+    Matches the merchant name against custom keyword rules first, then
+    built-in ones, then falls back to the instrument. Returns None rather
+    than guessing — a UPI payment to a person, or an unknown shop, is
+    genuinely uncategorised.
     """
     if merchant:
         # Bank descriptors use underscores where a name would use spaces.
         text = merchant.replace("_", " ")
-        for name, pattern in CATEGORY_PATTERNS:
+        for name, pattern in CUSTOM_KEYWORD_RULES + BUILTIN_KEYWORD_RULES:
             if pattern.search(text):
                 return name
     return CATEGORY_BY_INSTRUMENT.get(instrument or "")
@@ -544,6 +566,59 @@ def init_db() -> None:
             del column  # named only for readability
             conn.execute(ddl)
         conn.execute("CREATE INDEX IF NOT EXISTS entries_date_idx ON entries (date)")
+        conn.execute("CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS category_keywords (
+                id SERIAL PRIMARY KEY,
+                category TEXT NOT NULL,
+                keyword TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'custom',
+                UNIQUE (category, keyword)
+            )
+            """
+        )
+    seed_builtin_keywords()
+
+
+def seed_builtin_keywords() -> None:
+    """Load BUILTIN_CATEGORY_KEYWORDS into category_keywords, idempotently.
+
+    Runs on every startup, like the rest of init_db — ON CONFLICT DO NOTHING
+    means re-running it never disturbs a row a human edited directly in the
+    database.
+    """
+    with pool.connection() as conn:
+        for category, keywords in BUILTIN_CATEGORY_KEYWORDS:
+            for keyword in keywords:
+                conn.execute(
+                    "INSERT INTO category_keywords (category, keyword, source)"
+                    " VALUES (%s, %s, 'builtin') ON CONFLICT (category, keyword) DO NOTHING",
+                    (category, keyword),
+                )
+
+
+def load_custom_categories() -> None:
+    """Populate CUSTOM_CATEGORIES from the categories table."""
+    with pool.connection() as conn:
+        rows = conn.execute("SELECT name FROM categories").fetchall()
+    CUSTOM_CATEGORIES.clear()
+    CUSTOM_CATEGORIES.update(row[0] for row in rows)
+
+
+def load_category_keyword_rules() -> None:
+    """Populate BUILTIN_KEYWORD_RULES and CUSTOM_KEYWORD_RULES from the
+    category_keywords table, ordered by id so creation order is preserved
+    within each group."""
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT category, keyword, source FROM category_keywords ORDER BY id"
+        ).fetchall()
+    BUILTIN_KEYWORD_RULES.clear()
+    CUSTOM_KEYWORD_RULES.clear()
+    for category, keyword, source in rows:
+        target = BUILTIN_KEYWORD_RULES if source == "builtin" else CUSTOM_KEYWORD_RULES
+        target.append((category, keyword_pattern(keyword)))
 
 
 def backfill_spend() -> int:
@@ -585,6 +660,8 @@ def backfill_spend() -> int:
 async def lifespan(app: FastAPI):
     pool.open(wait=True, timeout=30)
     init_db()
+    load_custom_categories()
+    load_category_keyword_rules()
     backfill_spend()
     yield
     pool.close()
@@ -803,7 +880,7 @@ async def create_entry(request: Request) -> Entry:
 
 class CategoryUpdate(BaseModel):
     # None clears the category, putting the row back in the "needs a decision"
-    # bucket. Any other value must be one from CATEGORIES.
+    # bucket. Any other value must be one from CATEGORIES or CUSTOM_CATEGORIES.
     category: str | None = None
 
     @field_validator("category")
@@ -811,18 +888,95 @@ class CategoryUpdate(BaseModel):
     def known_category(cls, value):
         if value is None:
             return None
-        cleaned = value.strip().lower().replace(" ", "_").replace("-", "_")
-        if cleaned not in CATEGORIES:
+        cleaned = normalize_category(value)
+        if cleaned not in known_categories():
             raise ValueError(
-                f"unknown category {value!r}; expected one of " + ", ".join(CATEGORIES)
+                f"unknown category {value!r}; expected one of "
+                + ", ".join(sorted(known_categories()))
             )
+        return cleaned
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    # What makes the category usable: at least one keyword the parser will
+    # match against a merchant name (whole-word, case-insensitive) to assign
+    # this category automatically on future entries. Without this, a custom
+    # category could only ever be set by hand via PATCH.
+    keywords: list[str]
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value):
+        cleaned = normalize_category(value)
+        if not cleaned or not re.fullmatch(r"[a-z0-9_]+", cleaned):
+            raise ValueError(
+                f"invalid category name {value!r}; use letters, numbers, spaces,"
+                " dashes or underscores"
+            )
+        return cleaned
+
+    @field_validator("keywords")
+    @classmethod
+    def clean_keywords(cls, value):
+        cleaned = []
+        seen = set()
+        for keyword in value:
+            keyword = " ".join(keyword.split())
+            if not keyword or keyword.lower() in seen:
+                continue
+            seen.add(keyword.lower())
+            cleaned.append(keyword)
+        if not cleaned:
+            raise ValueError("at least one non-empty keyword is required")
         return cleaned
 
 
 @app.get("/categories", dependencies=[Depends(require_api_key)])
 def list_categories() -> dict:
-    """The category values a client may assign, in picker order."""
-    return {"categories": list(CATEGORIES)}
+    """The category values a client may assign.
+
+    Built-ins first, in picker order, then any custom categories added via
+    POST /categories, alphabetically.
+    """
+    return {"categories": list(CATEGORIES) + sorted(CUSTOM_CATEGORIES)}
+
+
+@app.post(
+    "/categories",
+    status_code=201,
+    dependencies=[Depends(require_api_key)],
+)
+def create_category(category: CategoryCreate) -> dict:
+    """Add a new category, with keywords that make it auto-detectable.
+
+    Stored in the `categories` and `category_keywords` tables so it survives
+    restarts, alongside the built-in CATEGORIES/BUILTIN_CATEGORY_KEYWORDS —
+    both are accepted by PATCH /entries/{id} and returned by GET /categories.
+    The keywords are checked against future entries' merchant names before
+    the built-in patterns, so a new category can carve a merchant out of a
+    generic bucket (e.g. pulling "FREELANCE CLIENT" out of nothing into
+    "side_hustle"). Adding one never touches existing rows.
+    """
+    if category.name in known_categories():
+        raise HTTPException(
+            status_code=409, detail=f"category {category.name!r} already exists"
+        )
+    with pool.connection() as conn:
+        conn.execute(
+            "INSERT INTO categories (name) VALUES (%s) ON CONFLICT DO NOTHING",
+            (category.name,),
+        )
+        for keyword in category.keywords:
+            conn.execute(
+                "INSERT INTO category_keywords (category, keyword, source)"
+                " VALUES (%s, %s, 'custom') ON CONFLICT (category, keyword) DO NOTHING",
+                (category.name, keyword),
+            )
+    CUSTOM_CATEGORIES.add(category.name)
+    for keyword in category.keywords:
+        CUSTOM_KEYWORD_RULES.append((category.name, keyword_pattern(keyword)))
+    return {"category": category.name, "keywords": category.keywords}
 
 
 @app.patch(
