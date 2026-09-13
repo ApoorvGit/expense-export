@@ -562,6 +562,7 @@ def init_db() -> None:
                 "ALTER TABLE entries ADD COLUMN IF NOT EXISTS category_source TEXT"
                 " DEFAULT 'auto'",
             ),
+            ("note", "ALTER TABLE entries ADD COLUMN IF NOT EXISTS note TEXT"),
         ):
             del column  # named only for readability
             conn.execute(ddl)
@@ -767,6 +768,8 @@ class Entry(BaseModel):
     category: str | None = None
     # "auto" when parsed, "manual" once a client has corrected it.
     category_source: str | None = None
+    # Free-text, set via PATCH. Not parsed from the SMS — purely a client note.
+    note: str | None = None
 
 
 # --------------------------------------------------------------------------
@@ -878,10 +881,17 @@ async def create_entry(request: Request) -> Entry:
     )
 
 
-class CategoryUpdate(BaseModel):
+class EntryUpdate(BaseModel):
+    # Both fields are optional and independent: only the ones actually present
+    # in the request body are touched (see update_entry's use of
+    # model_dump(exclude_unset=True)) — omit a field to leave it alone, send it
+    # as null to clear it.
+
     # None clears the category, putting the row back in the "needs a decision"
     # bucket. Any other value must be one from CATEGORIES or CUSTOM_CATEGORIES.
     category: str | None = None
+    # None (or an empty/whitespace-only string) clears the note.
+    note: str | None = None
 
     @field_validator("category")
     @classmethod
@@ -895,6 +905,14 @@ class CategoryUpdate(BaseModel):
                 + ", ".join(sorted(known_categories()))
             )
         return cleaned
+
+    @field_validator("note")
+    @classmethod
+    def clean_note(cls, value):
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class CategoryCreate(BaseModel):
@@ -984,19 +1002,36 @@ def create_category(category: CategoryCreate) -> dict:
     response_model=Entry,
     dependencies=[Depends(require_api_key)],
 )
-def update_category(entry_id: int, update: CategoryUpdate) -> Entry:
-    """Correct or fill in one entry's category.
+def update_entry(entry_id: int, update: EntryUpdate) -> Entry:
+    """Correct or fill in one entry's category and/or note.
 
-    Marks the row `category_source='manual'` so re-parsing never overwrites the
-    decision a human made.
+    Only fields actually present in the request body are changed — sending
+    `{"note": "..."}` alone leaves `category` untouched, and vice versa.
+    Setting `category` marks the row `category_source='manual'` so re-parsing
+    never overwrites the decision a human made; `note` is never touched by
+    re-parsing regardless.
     """
-    source = "auto" if update.category is None else "manual"
+    fields = update.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(
+            status_code=422, detail="at least one of category, note must be provided"
+        )
+    set_clauses = []
+    params: list[object] = []
+    if "category" in fields:
+        set_clauses += ["category = %s", "category_source = %s"]
+        params += [fields["category"], "auto" if fields["category"] is None else "manual"]
+    if "note" in fields:
+        set_clauses.append("note = %s")
+        params.append(fields["note"])
+    params.append(entry_id)
+
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         row = cur.execute(
-            "UPDATE entries SET category = %s, category_source = %s WHERE id = %s"
+            f"UPDATE entries SET {', '.join(set_clauses)} WHERE id = %s"
             " RETURNING id, message, date, amount, merchant, currency, direction,"
-            " instrument, bank, category, category_source",
-            (update.category, source, entry_id),
+            " instrument, bank, category, category_source, note",
+            params,
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"No entry with id {entry_id}")
@@ -1020,7 +1055,7 @@ def delete_entry(entry_id: int) -> Entry:
         row = cur.execute(
             "DELETE FROM entries WHERE id = %s"
             " RETURNING id, message, date, amount, merchant, currency, direction,"
-            " instrument, bank, category, category_source",
+            " instrument, bank, category, category_source, note",
             (entry_id,),
         ).fetchone()
     if row is None:
@@ -1071,7 +1106,7 @@ def list_entries(
     sort = "DESC" if order == "desc" else "ASC"
     sql = (
         "SELECT id, message, date, amount, merchant, currency, direction,"
-        " instrument, bank, category, category_source FROM entries"
+        " instrument, bank, category, category_source, note FROM entries"
     )
     if where:
         sql += " WHERE " + " AND ".join(where)
