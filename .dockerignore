@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.db
+*.pyc
+.git/
+.gitignore
+.env
+render.yaml
+README.md
+BACKEND_SPEC.md
+FRONTEND_PROMPT.md
+NOTE_FEATURE.md
